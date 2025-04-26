@@ -24,6 +24,7 @@ page.on("response", async (response) => {
   // thanks chatgpt
   const buffer = await response.body();
   const filePath = path.join("scraped", "d" + id.toString().padStart(3, "0"));
+  console.log(filePath, new URL(response.url()).pathname);
   id++;
   if (buffer.slice(0, prefix.length).equals(prefix)) {
     await fs.writeFile(filePath + ".json", buffer.slice(prefix.length));
@@ -33,6 +34,7 @@ page.on("response", async (response) => {
 });
 await story.click();
 console.log("story hath been click");
+await page.waitForTimeout(1000);
+console.log("waited..screensotoing");
 await page.screenshot({ path: "bruh.png", fullPage: true });
-// await page.waitForTimeout(1000);
 await browser.close();
