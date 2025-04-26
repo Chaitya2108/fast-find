@@ -1,6 +1,7 @@
 // node --experimental-strip-types scraper.ts
 
 import playwright from "playwright";
+import cookies from "./cookies.json" with { type: 'json' };
 
 // https://oxylabs.io/blog/playwright-web-scraping
 // Firefox: https://www.reddit.com/r/webscraping/comments/149czf4/how_i_can_bypass_antibot_in_playwright_or_seleium/jo5xhw2/
@@ -9,6 +10,7 @@ const browser = await playwright.firefox.launch({
   // headless: false,
 });
 const context = await browser.newContext();
+await context.addCookies(cookies);
 const page = await context.newPage();
 await page.goto("https://instagram.com/");
 await page.screenshot({ path: "bruh.png", fullPage: true });
