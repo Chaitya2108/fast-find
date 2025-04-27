@@ -2,10 +2,12 @@ import express from "express";
 import { MongoClient } from "mongodb";
 import dotenv from "dotenv";
 import fs from "fs/promises";
+import cors from "cors";
 
 dotenv.config();
 
 const app = express();
+app.use(cors());
 const PORT = process.env.PORT || 3000;
 
 const client = new MongoClient(process.env.MONGO_URI);
