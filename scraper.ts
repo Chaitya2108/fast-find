@@ -354,7 +354,7 @@ async function insertIfNew(
   url: string | null,
   ...args: Parameters<typeof readImages>
 ): Promise<void> {
-  const existingDoc = await collection.findOne({ source_id: sourceId });
+  const existingDoc = await collection.findOne({ sourceId });
   if (existingDoc) {
     return;
   }
