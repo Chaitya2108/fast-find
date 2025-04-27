@@ -330,7 +330,7 @@ for (const script of await page
   }
 }
 console.log("i am instagramming now");
-for (let i = 0; i < 3; i++) {
+for (let i = 0; i < 5; i++) {
   await page.keyboard.press("End"); // scroll to bottom
   await page
     .waitForRequest(

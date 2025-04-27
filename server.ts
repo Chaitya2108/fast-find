@@ -22,5 +22,5 @@ app.get("/api/events", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`http://localhost:${PORT}/`);
 });
