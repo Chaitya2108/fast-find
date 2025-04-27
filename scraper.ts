@@ -5,7 +5,15 @@ import cookies from "./cookies.json" with { type: "json" };
 import path from "path";
 import fs from "fs/promises";
 import GenAI, { type Part } from "@google/genai";
+import { Collection, MongoClient } from "mongodb";
 const { GoogleGenAI } = GenAI;
+
+const client = new MongoClient(
+  `mongodb+srv://${(await fs.readFile("mongo_userpass.txt", "utf-8")).trim()}@bruh.duskolx.mongodb.net/?retryWrites=true&w=majority&appName=Bruh`
+);
+await client.connect();
+const db = client.db("events_db");
+const collection: Collection<ScrapedEvent> = db.collection("events_collection");
 
 type ImageV2Candidate = {
   width: number;
@@ -157,6 +165,10 @@ type GeminiResult = {
   date: { year: number; month: number; date: number };
   start: { hour: number; minute: number };
   end?: { hour: number; minute: number };
+};
+type ScrapedEvent = ((GeminiResult & { result: true }) | { result: false }) & {
+  sourceId: string;
+  url: string | null;
 };
 
 const schemaPrompt = `output only a JSON array of event objects without any explanation or formatting, whose contents each conform to the following schema.
@@ -336,12 +348,43 @@ console.log("waited..screensotoing");
 await browser.close();
 
 await Promise.all(promises);
+
+async function ifExists(
+  sourceId: string,
+  url: string | null,
+  ...args: Parameters<typeof readImages>
+): Promise<void> {
+  const existingDoc = await collection.findOne({ source_id: sourceId });
+  if (existingDoc) {
+    return;
+  }
+  const events = (await readImages(...args)).filter(
+    (event) => event.freeFood.length > 0
+  );
+  if (events.length > 0) {
+    await collection.insertMany(
+      events.map((event) => ({ ...event, sourceId, url, result: true }))
+    );
+  } else {
+    await collection.insertOne({
+      sourceId,
+      url,
+      result: false,
+    });
+  }
+}
+
 console.log("allUserStories", allUserStories);
 console.log("allTimelinePosts", allTimelinePosts);
-console.log(await readImages([allUserStories[0].stories[0].imageUrl]));
-console.log(
-  await readImages(
-    [allTimelinePosts[0].imageUrls[0]],
-    allTimelinePosts[0].caption
-  )
-);
+for (const { username, stories } of allUserStories) {
+  for (const { storyId, postId, imageUrl } of stories) {
+    const sourceId = `story/${username}/${storyId}`;
+    const url = postId ? `https://www.instagram.com/p/${postId}/` : null;
+    await ifExists(sourceId, url, [imageUrl]);
+  }
+}
+for (const { username, postId, caption, imageUrls } of allTimelinePosts) {
+  const sourceId = `post/${username}/${postId}`;
+  const url = `https://www.instagram.com/p/${postId}/`;
+  await ifExists(sourceId, url, [imageUrls[0]], caption);
+}
