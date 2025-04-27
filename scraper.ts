@@ -349,7 +349,7 @@ await browser.close();
 
 await Promise.all(promises);
 
-async function ifExists(
+async function insertIfNew(
   sourceId: string,
   url: string | null,
   ...args: Parameters<typeof readImages>
@@ -380,11 +380,12 @@ for (const { username, stories } of allUserStories) {
   for (const { storyId, postId, imageUrl } of stories) {
     const sourceId = `story/${username}/${storyId}`;
     const url = postId ? `https://www.instagram.com/p/${postId}/` : null;
-    await ifExists(sourceId, url, [imageUrl]);
+    await insertIfNew(sourceId, url, [imageUrl]);
   }
 }
 for (const { username, postId, caption, imageUrls } of allTimelinePosts) {
   const sourceId = `post/${username}/${postId}`;
   const url = `https://www.instagram.com/p/${postId}/`;
-  await ifExists(sourceId, url, [imageUrls[0]], caption);
+  await insertIfNew(sourceId, url, [imageUrls[0]], caption);
 }
+console.log("ok gamers we done");
