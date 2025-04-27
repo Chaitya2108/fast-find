@@ -14,7 +14,7 @@ async function fetchImageAsBase64(url: string): Promise<string> {
     return buffer.toString("base64");
 }
   
-async function extractFoodFromImg(imageUrl: string): Promise<string[]> {
+async function extractFoodFromImg(imageUrl: string): Promise<string> {
     const key = await loadApiKey();
     const ai = new GoogleGenAI({ apiKey: key});
 
@@ -66,7 +66,7 @@ async function extractFoodFromImg(imageUrl: string): Promise<string[]> {
       });
     console.log(result.text);
     // const output = await result.response;
-    return result.text;
+    return result.text ?? '';
 }
 
 async function main() {

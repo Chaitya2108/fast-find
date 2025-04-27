@@ -1,3 +1,4 @@
 node_modules/
 cookies.json
 venv/
+api_key.txt
