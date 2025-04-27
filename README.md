@@ -18,3 +18,7 @@ todo:
 - [ ] fetch ai and dain??
 - [ ] domain
 - [ ] mongodb
+
+## dain
+
+- [follow this guide](https://lahacks-docs.dain.org/docs/getting-started/introduction)
