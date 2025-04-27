@@ -64,7 +64,7 @@ function buildTable(events: ScrapedEvent[]): BaseUIElement<TableProps> {
         const start = new Date(
           Date.UTC(
             event.date.year,
-            event.date.month,
+            event.date.month - 1,
             event.date.date,
             event.start.hour,
             event.start.minute
@@ -78,7 +78,7 @@ function buildTable(events: ScrapedEvent[]): BaseUIElement<TableProps> {
                 new Date(
                   Date.UTC(
                     event.date.year,
-                    event.date.month,
+                    event.date.month - 1,
                     event.date.date,
                     event.end.hour,
                     event.end.minute
@@ -199,7 +199,7 @@ const getFreeFoodDateConfig: ToolConfig = {
 
     return {
       text: `There are ${events.length} event${events.length !== 1 ? "s" : ""} on ${new Date(
-        Date.UTC(date.year, date.month, date.date)
+        Date.UTC(date.year, date.month - 1, date.date)
       ).toLocaleDateString("en-US", {
         dateStyle: "long",
         timeZone: "UTC",
