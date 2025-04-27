@@ -1,189 +1,135 @@
 //File: example/example-node.ts
 
+import fs from "fs/promises";
+
 import { z } from "zod";
 import axios from "axios";
+import { Collection, MongoClient } from "mongodb";
 
 import { defineDAINService, ToolConfig } from "@dainprotocol/service-sdk";
 
 import {
   CardUIBuilder,
-  TableUIBuilder,
   MapUIBuilder,
-  LayoutUIBuilder,
+  TableUIBuilder,
 } from "@dainprotocol/utils";
+
+type GeminiResult = {
+  freeFood: string[];
+  location: string;
+  date: { year: number; month: number; date: number };
+  start: { hour: number; minute: number };
+  end?: { hour: number; minute: number };
+};
+type ScrapedEvent = ((GeminiResult & { result: true }) | { result: false }) & {
+  sourceId: string;
+  url: string | null;
+};
+
+async function connectDb(): Promise<Collection<ScrapedEvent>> {
+  const client = new MongoClient(
+    `mongodb+srv://${(await fs.readFile("mongo_userpass.txt", "utf-8")).trim()}@bruh.duskolx.mongodb.net/?retryWrites=true&w=majority&appName=Bruh`
+  );
+  await client.connect();
+  const db = client.db("events_db");
+  return db.collection("events_collection");
+}
+
+const dbPromise = connectDb();
 
 const port = Number(process.env.PORT) || 2022;
 
-const getWeatherEmoji = (temperature: number): string => {
-  if (temperature <= 0) return "🥶";
-  if (temperature <= 10) return "❄️";
-  if (temperature <= 20) return "⛅";
-  if (temperature <= 25) return "☀️";
-  if (temperature <= 30) return "🌞";
-  return "🔥";
-};
+const fmt = new Intl.DateTimeFormat("en-US", {
+  dateStyle: "long",
+  timeStyle: "short",
+  timeZone: "UTC",
+});
 
-const getWeatherConfig: ToolConfig = {
-  id: "get-weather",
-  name: "Get Weather",
-  description: "Fetches current weather for a city",
-  input: z
-    .object({
-      locationName: z.string().describe("Location name"),
-      latitude: z.number().describe("Latitude coordinate"),
-      longitude: z.number().describe("Longitude coordinate"),
-    })
-    .describe("Input parameters for the weather request"),
+const getAllFreeFoodConfig: ToolConfig = {
+  id: "get-all-free-food",
+  name: "Get All Free Food",
+  description:
+    "Returns all past and future free food events. Decent fallback if other tools are too limiting because there aren't that many free food events in the database right now",
+  input: z.undefined().describe("does not take input"),
   output: z
-    .object({
-      temperature: z.number().describe("Current temperature in Celsius"),
-      windSpeed: z.number().describe("Current wind speed in km/h"),
-    })
-    .describe("Current weather information"),
+    .array(
+      z.object({
+        freeFood: z
+          .array(z.string())
+          .describe(
+            "non-empty list of consumable items or specific vendor names that are offered for free, e.g. Dirty Birds, boba, snacks, food"
+          ),
+        location: z.string().describe("name of location on UCSD campus"),
+        date: z
+          .object({
+            year: z.number(),
+            month: z.number().describe("month between 1 and 12"),
+            date: z.number(),
+          })
+          .describe("when the event takes place"),
+        start: z
+          .object({ hour: z.number(), minute: z.number() })
+          .describe("start time of event"),
+        end: z
+          .object({ hour: z.number(), minute: z.number() })
+          .optional()
+          .describe("end time of event, if specified"),
+      })
+    )
+    .describe("list of events with free food"),
   pricing: { pricePerUse: 0, currency: "USD" },
-  handler: async (
-    { locationName, latitude, longitude },
-    agentInfo,
-    context
-  ) => {
-    console.log(
-      `User / Agent ${agentInfo.id} requested weather at ${locationName} (${latitude},${longitude})`
-    );
+  handler: async (_, agentInfo, context) => {
+    console.log(`User / Agent ${agentInfo.id} requested ALL free food events`);
 
-    const response = await axios.get(
-      `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,wind_speed_10m`
-    );
+    const collection = await dbPromise;
 
-    const { temperature_2m, wind_speed_10m } = response.data.current;
-    const weatherEmoji = getWeatherEmoji(temperature_2m);
+    const events = await collection.find({ result: true }).toArray();
 
     return {
-      text: `The current temperature in ${locationName} is ${temperature_2m}°C with wind speed of ${wind_speed_10m} km/h`,
-      data: {
-        temperature: temperature_2m,
-        windSpeed: wind_speed_10m,
-      },
-      ui: new CardUIBuilder()
-        .setRenderMode("page")
-        .title(`Current Weather in ${locationName} ${weatherEmoji}`)
-        .addChild(
-          new MapUIBuilder()
-            .setInitialView(latitude, longitude, 10)
-            .setMapStyle("mapbox://styles/mapbox/streets-v12")
-            .addMarkers([
-              {
-                latitude,
-                longitude,
-                title: locationName,
-                description: `Temperature: ${temperature_2m}°C\nWind: ${wind_speed_10m} km/h`,
-                text: `${locationName} ${weatherEmoji}`,
-              },
-            ])
-            .build()
-        )
-        .content(
-          `Temperature: ${temperature_2m}°C\nWind Speed: ${wind_speed_10m} km/h`
-        )
-        .build(),
-    };
-  },
-};
-
-const getWeatherForecastConfig: ToolConfig = {
-  id: "get-weather-forecast",
-  name: "Get Weather Forecast",
-  description: "Fetches hourly weather forecast",
-  input: z
-    .object({
-      locationName: z.string().describe("Location name"),
-      latitude: z.number().describe("Latitude coordinate"),
-      longitude: z.number().describe("Longitude coordinate"),
-    })
-    .describe("Input parameters for the forecast request"),
-  output: z
-    .object({
-      times: z.array(z.string()).describe("Forecast times"),
-      temperatures: z
-        .array(z.number())
-        .describe("Temperature forecasts in Celsius"),
-      windSpeeds: z.array(z.number()).describe("Wind speed forecasts in km/h"),
-      humidity: z
-        .array(z.number())
-        .describe("Relative humidity forecasts in %"),
-    })
-    .describe("Hourly weather forecast"),
-  pricing: { pricePerUse: 0, currency: "USD" },
-  handler: async (
-    { locationName, latitude, longitude },
-    agentInfo,
-    context
-  ) => {
-    console.log(
-      `User / Agent ${agentInfo.id} requested forecast at ${locationName} (${latitude},${longitude})`
-    );
-
-    const response = await axios.get(
-      `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m`
-    );
-
-    const { time, temperature_2m, wind_speed_10m, relative_humidity_2m } =
-      response.data.hourly;
-
-    // Limit to first 24 hours of forecast data
-    const limitedTime = time.slice(0, 24);
-    const limitedTemp = temperature_2m.slice(0, 24);
-    const limitedWind = wind_speed_10m.slice(0, 24);
-    const limitedHumidity = relative_humidity_2m.slice(0, 24);
-
-    const weatherEmoji = getWeatherEmoji(limitedTemp[0]);
-
-    return {
-      text: `Weather forecast for ${locationName} available for the next 24 hours`,
-      data: {
-        times: limitedTime,
-        temperatures: limitedTemp,
-        windSpeeds: limitedWind,
-        humidity: limitedHumidity,
-      },
-      ui: new LayoutUIBuilder()
-        .setRenderMode("page")
-        .setLayoutType("column")
-        .addChild(
-          new MapUIBuilder()
-            .setInitialView(latitude, longitude, 10)
-            .setMapStyle("mapbox://styles/mapbox/streets-v12")
-            .addMarkers([
-              {
-                latitude,
-                longitude,
-                title: locationName,
-                description: `Temperature: ${limitedTemp[0]}°C\nWind: ${limitedWind[0]} km/h`,
-                text: `${locationName} ${weatherEmoji}`,
-              },
-            ])
-            .build()
-        )
-        .addChild(
-          new TableUIBuilder()
-            .addColumns([
-              { key: "time", header: "Time", type: "string" },
-              {
-                key: "temperature",
-                header: "Temperature (°C)",
-                type: "number",
-              },
-              { key: "windSpeed", header: "Wind Speed (km/h)", type: "number" },
-              { key: "humidity", header: "Humidity (%)", type: "number" },
-            ])
-            .rows(
-              limitedTime.map((t: string, i: number) => ({
-                time: new Date(t).toLocaleString(),
-                temperature: limitedTemp[i],
-                windSpeed: limitedWind[i],
-                humidity: limitedHumidity[i],
-              }))
-            )
-            .build()
+      text: `We have ${events.length} event${events.length !== 1 ? "s" : ""} with free food in our database, though some of them may have happened already.`,
+      data: events,
+      ui: new TableUIBuilder()
+        .addColumns([
+          // https://github.com/dain-protocol/dain-STONKS-service/blob/8315dd87a47f86b969af3462e9f8298a706b1358/stonks/src/index.ts#L109-L110
+          { key: "when", header: "When", type: "text" },
+          { key: "what", header: "What", type: "text" },
+          { key: "where", header: "Where", type: "text" },
+          { key: "source", header: "Source", type: "text" },
+        ])
+        .rows(
+          events.map((event) => {
+            if (!event.result) {
+              throw new Error("what");
+            }
+            const start = new Date(
+              Date.UTC(
+                event.date.year,
+                event.date.month,
+                event.date.date,
+                event.start.hour,
+                event.start.minute
+              )
+            );
+            return {
+              when: event.end
+                ? fmt.formatRange(
+                    start,
+                    new Date(
+                      Date.UTC(
+                        event.date.year,
+                        event.date.month,
+                        event.date.date,
+                        event.end.hour,
+                        event.end.minute
+                      )
+                    )
+                  )
+                : fmt.format(start),
+              what: `free ${event.freeFood.join(", ")}`,
+              where: event.location,
+              source: event.url ?? "",
+            };
+          })
         )
         .build(),
     };
@@ -192,28 +138,26 @@ const getWeatherForecastConfig: ToolConfig = {
 
 const dainService = defineDAINService({
   metadata: {
-    title: "Weather DAIN Service",
-    description:
-      "A DAIN service for current weather and forecasts using Open-Meteo API",
+    title: "UCSD free food events",
+    description: "Get upcoming free food events",
     version: "1.0.0",
-    author: "Your Name",
-    tags: ["weather", "forecast", "dain"],
+    author: "Chaitya and Sean",
+    tags: ["ucsd", "events", "food", "food insecurity", "free food"],
     logo: "https://cdn-icons-png.flaticon.com/512/252/252035.png",
   },
   exampleQueries: [
     {
-      category: "Weather",
+      category: "UCSD",
       queries: [
-        "What is the weather in Tokyo?",
-        "What is the weather in San Francisco?",
-        "What is the weather in London?",
+        "What free food events are coming up?",
+        "Are there any free food events today?",
       ],
     },
   ],
   identity: {
     apiKey: process.env.DAIN_API_KEY,
   },
-  tools: [getWeatherConfig, getWeatherForecastConfig],
+  tools: [getAllFreeFoodConfig],
 });
 
 dainService.startNode({ port: port }).then(({ address }) => {

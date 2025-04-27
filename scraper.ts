@@ -178,7 +178,7 @@ const schemaPrompt = `output only a JSON array of event objects without any expl
   "location": string,
   "date": { "year": number; "month": number; "date": number }, // Month is between 1 and 12
   "start": { "hour": number; "minute": number }, // 24-hour format
-  "end": { "hour": number; "minute": number } // 24-hour format, omitted if no end time specified
+  "end": { "hour": number; "minute": number } // 24-hour format, optional and omitted if no end time specified
 }`;
 
 async function readImages(
