@@ -13,8 +13,13 @@ type ImageV2Candidate = {
   url: string;
 };
 type EdgeNode = {
+  /** seems to be user iD */
   id: string;
   items: {
+    /** ID of story shown in URL */
+    pk: string;
+    /** {pk}_{userId} I think */
+    id: string;
     accessibility_caption: string;
     image_versions2: {
       candidates: ImageV2Candidate[];
@@ -79,6 +84,7 @@ type TimelinePostNode = {
           };
         }[]
       | null;
+    code: string;
     user: {
       // same as owner??
       username: string;
@@ -105,6 +111,7 @@ type GraphQlResponse = {
 
 type Story = {
   imageUrl: string;
+  storyId: string;
   /** instagram post ID: https://www.instagram.com/p/___/ */
   postId: string | null;
 };
@@ -116,6 +123,7 @@ type TimelinePost = {
   username: string;
   caption: string;
   imageUrls: string[];
+  postId: string;
 };
 
 function selectBest(
@@ -217,6 +225,7 @@ function handleGraphQlResponse(response: GraphQlResponse): void {
           return {
             imageUrl: selectBest(item.image_versions2.candidates, true),
             postId: item.story_feed_media?.[0].media_code ?? null,
+            storyId: item.pk,
           };
         }),
       })
@@ -250,6 +259,7 @@ function handleGraphQlResponse(response: GraphQlResponse): void {
             imageUrls: images.map(({ image_versions2 }) =>
               selectBest(image_versions2.candidates)
             ),
+            postId: media.code,
           },
         ];
       }
