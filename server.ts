@@ -6,9 +6,9 @@ import fs from "fs/promises";
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
-const client = new MongoClient(`mongodb+srv://${(await fs.readFile("mongo_userpass.txt", "utf-8")).trim()}@bruh.duskolx.mongodb.net/?retryWrites=true&w=majority`);
+const client = new MongoClient(process.env.MONGO_URI);
 
 await client.connect();
 const db = client.db("events_db"); // replace with your actual db name
