@@ -90,7 +90,7 @@ type TimelinePostNode = {
     caption: {
       text: string;
     };
-  };
+  } | null;
 };
 type GraphQlResponse = {
   data: {
@@ -151,7 +151,7 @@ type GeminiResult = {
   end?: { hour: number; minute: number };
 };
 
-const schemaPrompt = `output only a JSON object without any explanation or formatting according to the following schema.
+const schemaPrompt = `output only a JSON array of event objects without any explanation or formatting, whose contents each conform to the following schema.
 
 {
   "freeFood": string[], // List only free consumable items, using the original phrasing from the post (e.g. "Dirty Birds", "Tapex", "boba", "refreshments", "snacks", "food"). Empty if no free consumables.
@@ -159,14 +159,12 @@ const schemaPrompt = `output only a JSON object without any explanation or forma
   "date": { "year": number; "month": number; "date": number }, // Month is between 1 and 12
   "start": { "hour": number; "minute": number }, // 24-hour format
   "end": { "hour": number; "minute": number } // 24-hour format, omitted if no end time specified
-}
-
-If no event is described, output \`null\`.`;
+}`;
 
 async function readImages(
   imageUrls: string[],
   caption?: string
-): Promise<GeminiResult | null> {
+): Promise<GeminiResult[]> {
   const result = await ai.models.generateContent({
     model: "gemini-2.0-flash",
     contents: [
@@ -204,6 +202,63 @@ const page = await context.newPage();
 const allUserStories: UserStories[] = [];
 const allTimelinePosts: TimelinePost[] = [];
 let id = 0;
+function handleGraphQlResponse(response: GraphQlResponse): void {
+  const {
+    data: {
+      xdt_api__v1__feed__reels_media__connection: storyData,
+      xdt_api__v1__feed__timeline__connection: timelineData,
+    },
+  } = response;
+  if (storyData) {
+    const userStories = storyData.edges.map(
+      ({ node: user }): UserStories => ({
+        username: user.user.username,
+        stories: user.items.map((item): Story => {
+          return {
+            imageUrl: selectBest(item.image_versions2.candidates, true),
+            postId: item.story_feed_media?.[0].media_code ?? null,
+          };
+        }),
+      })
+    );
+    allUserStories.push(...userStories);
+    // for (const { username, stories } of userStories) {
+    //   console.log(`[${username}]`);
+    //   for (const story of stories) {
+    //     console.log(story.imageUrl);
+    //     if (story.postId) {
+    //       console.log(`=> https://www.instagram.com/p/${story.postId}/`);
+    //     }
+    //   }
+    //   console.log();
+    // }
+    return;
+  }
+  if (timelineData) {
+    const timelinePosts = timelineData.edges.flatMap(
+      ({ node: { media } }): TimelinePost[] => {
+        if (!media) {
+          return [];
+        }
+        const images: {
+          image_versions2: { candidates: ImageV2Candidate[] };
+        }[] = media.carousel_media ?? [media];
+        return [
+          {
+            username: media.owner.username,
+            caption: media.caption.text,
+            imageUrls: images.map(({ image_versions2 }) =>
+              selectBest(image_versions2.candidates)
+            ),
+          },
+        ];
+      }
+    );
+    allTimelinePosts.push(...timelinePosts);
+    return;
+  }
+  console.log("| this one has no stories");
+}
 async function handleResponse(response: Response): Promise<void> {
   // thanks chatgpt
   const url = response.url();
@@ -216,56 +271,7 @@ async function handleResponse(response: Response): Promise<void> {
     console.log(filePath, url);
     id++;
     await fs.writeFile(filePath, buffer);
-    const {
-      data: {
-        xdt_api__v1__feed__reels_media__connection: storyData,
-        xdt_api__v1__feed__timeline__connection: timelineData,
-      },
-    }: GraphQlResponse = JSON.parse(buffer.toString("utf-8"));
-    if (storyData) {
-      const userStories = storyData.edges.map(
-        ({ node: user }): UserStories => ({
-          username: user.user.username,
-          stories: user.items.map((item): Story => {
-            return {
-              imageUrl: selectBest(item.image_versions2.candidates, true),
-              postId: item.story_feed_media?.[0].media_code ?? null,
-            };
-          }),
-        })
-      );
-      allUserStories.push(...userStories);
-      // for (const { username, stories } of userStories) {
-      //   console.log(`[${username}]`);
-      //   for (const story of stories) {
-      //     console.log(story.imageUrl);
-      //     if (story.postId) {
-      //       console.log(`=> https://www.instagram.com/p/${story.postId}/`);
-      //     }
-      //   }
-      //   console.log();
-      // }
-      return;
-    }
-    if (timelineData) {
-      const timelinePosts = timelineData.edges.map(
-        ({ node: { media } }): TimelinePost => {
-          const images: {
-            image_versions2: { candidates: ImageV2Candidate[] };
-          }[] = media.carousel_media ?? [media];
-          return {
-            username: media.owner.username,
-            caption: media.caption.text,
-            imageUrls: images.map(({ image_versions2 }) =>
-              selectBest(image_versions2.candidates)
-            ),
-          };
-        }
-      );
-      allTimelinePosts.push(...timelinePosts);
-      return;
-    }
-    console.log("| this one has no stories");
+    handleGraphQlResponse(JSON.parse(buffer.toString("utf-8")));
   }
   // if (buffer.slice(0, prefix.length).equals(prefix)) {
   //   await fs.writeFile(filePath + ".json", buffer.slice(prefix.length));
@@ -278,14 +284,43 @@ page.on("response", (response) => {
   promises.push(handleResponse(response));
 });
 await page.goto("https://instagram.com/");
+function* analyze(x: any): Generator<GraphQlResponse> {
+  for (const req of x.require ?? []) {
+    const args = req.at(-1);
+    for (const arg of args) {
+      if (arg?.__bbox) {
+        if (arg.__bbox.complete) yield arg.__bbox.result;
+        else yield* analyze(arg.__bbox);
+      }
+    }
+  }
+}
+for (const script of await page
+  .locator('css=script[type="application/json"]')
+  .all()) {
+  const json = await script
+    .textContent()
+    .then((json) => json && JSON.parse(json))
+    .catch(() => {});
+  const results = Array.from(analyze(json));
+  for (const result of results) {
+    handleGraphQlResponse(result);
+  }
+}
 console.log("i am instagramming now");
 await page.keyboard.press("End"); // scroll to bottom
-await page.waitForTimeout(1000);
+await page.waitForRequest(
+  (request) => new URL(request.url()).pathname === "/graphql/query"
+);
 await page.screenshot({ path: "bruh.png", fullPage: true });
 const story = await page.waitForSelector('[aria-label^="Story by"]');
 console.log("i see the stories are ready for me to CLICK");
 await story.click();
 console.log("story hath been click");
+await page.waitForRequest(
+  (request) => new URL(request.url()).pathname === "/graphql/query"
+);
+console.log("a request was made");
 await page.waitForTimeout(1000);
 console.log("waited..screensotoing");
 await browser.close();
@@ -294,3 +329,9 @@ await Promise.all(promises);
 console.log("allUserStories", allUserStories);
 console.log("allTimelinePosts", allTimelinePosts);
 console.log(await readImages([allUserStories[0].stories[0].imageUrl]));
+console.log(
+  await readImages(
+    [allTimelinePosts[0].imageUrls[0]],
+    allTimelinePosts[0].caption
+  )
+);
