@@ -1,3 +1,7 @@
+'''
+UNUSED
+'''
+
 import instaloader
 
 def scrapeByHashtag(hashtag, max_posts=10):

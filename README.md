@@ -7,6 +7,9 @@ you need:
 - water (see: [About Water and Healthier Drinks](https://www.cdc.gov/healthy-weight-growth/water-healthy-drinks/index.html))
 - `mongo_userpass.txt` mongo atlas username colon password
 
+versions and packages:
+- Node v22
+
 ```shell
 $ npm install
 $ npx playwright install firefox
@@ -22,3 +25,9 @@ todo:
 ## dain (`bleh/`)
 
 - [follow this guide](https://lahacks-docs.dain.org/docs/getting-started/introduction)
+
+```shell
+# from the bleh/ directory, NOT root directory of Fast-Find
+$ npm install -g @dainprotocol/cli
+$ npm run dev
+```
