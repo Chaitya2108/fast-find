@@ -330,10 +330,17 @@ for (const script of await page
   }
 }
 console.log("i am instagramming now");
-await page.keyboard.press("End"); // scroll to bottom
-await page.waitForRequest(
-  (request) => new URL(request.url()).pathname === "/graphql/query"
-);
+for (let i = 0; i < 3; i++) {
+  await page.keyboard.press("End"); // scroll to bottom
+  await page
+    .waitForRequest(
+      (request) => new URL(request.url()).pathname === "/graphql/query",
+      { timeout: 1000 }
+    )
+    .catch(() => {});
+  await page.waitForTimeout(500); // give time for page to update so i can press end key again
+  console.log("end key", i + 1);
+}
 await page.screenshot({ path: "bruh.png", fullPage: true });
 const story = await page.waitForSelector('[aria-label^="Story by"]');
 console.log("i see the stories are ready for me to CLICK");
@@ -353,10 +360,10 @@ async function insertIfNew(
   sourceId: string,
   url: string | null,
   ...args: Parameters<typeof readImages>
-): Promise<void> {
+): Promise<boolean> {
   const existingDoc = await collection.findOne({ sourceId });
   if (existingDoc) {
-    return;
+    return false;
   }
   const events = (await readImages(...args)).filter(
     (event) => event.freeFood.length > 0
@@ -372,6 +379,7 @@ async function insertIfNew(
       result: false,
     });
   }
+  return true;
 }
 
 console.log("allUserStories", allUserStories);
@@ -380,12 +388,16 @@ for (const { username, stories } of allUserStories) {
   for (const { storyId, postId, imageUrl } of stories) {
     const sourceId = `story/${username}/${storyId}`;
     const url = postId ? `https://www.instagram.com/p/${postId}/` : null;
-    await insertIfNew(sourceId, url, [imageUrl]);
+    const added = await insertIfNew(sourceId, url, [imageUrl]);
+    console.log(sourceId, added);
   }
 }
 for (const { username, postId, caption, imageUrls } of allTimelinePosts) {
   const sourceId = `post/${username}/${postId}`;
   const url = `https://www.instagram.com/p/${postId}/`;
-  await insertIfNew(sourceId, url, [imageUrls[0]], caption);
+  const added = await insertIfNew(sourceId, url, imageUrls, caption);
+  console.log(sourceId, added);
 }
-console.log("ok gamers we done");
+console.log(
+  "ok gamers we done. it is safe to ctrl+C if the program does not exit on its own"
+);
