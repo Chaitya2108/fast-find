@@ -28,9 +28,7 @@ function matchesSearch(event, search) {
 }
 
 function App() {
-  const API_URL = import.meta.env.PROD
-  ? "https://fast-find.onrender.com/api/events"   // your Render backend URL
-  : "/api/events";                                       // local proxy path
+  const API_URL = import.meta.env.VITE_API_URL || "/api/events";                                     // local proxy path
 
   const [upcomingEvents, setUpcomingEvents] = useState([]);
   const [pastEvents, setPastEvents] = useState([]);
@@ -38,6 +36,7 @@ function App() {
 
 
   useEffect(() => {
+      
     fetch(API_URL) // automatically forwarded via proxy
       .then(res => res.json())
       .then(data => {
