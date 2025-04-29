@@ -365,23 +365,41 @@ for (let i = 0; i < 1; i++) {
   await page.waitForTimeout(500); // give time for page to update so i can press end key again
   console.log("end key", i + 1);
 }
-await page.keyboard.press("Home");
-const storyScroller = page.locator(
-  'css=[data-pagelet="story_tray"] [role=presentation]'
-);
-await storyScroller.hover();
-await page.mouse.wheel(10000, 0);
-await page.screenshot({ path: "bruh.png", fullPage: true });
-await page.waitForSelector('[aria-label^="Story by"]');
+// await page.keyboard.press("Home");
+// const storyScroller = page.locator(
+//   'css=[data-pagelet="story_tray"] [role=presentation]'
+// );
+// await storyScroller.hover();
+// for (let i = 0; i < 10; i++) await page.mouse.wheel(1000, 0);
+const story = await page.waitForSelector('[aria-label^="Story by"]');
 console.log("i see the stories are ready for me to CLICK");
-await page.locator('css=[aria-label^="Story by"]').last().click();
+await story.click();
+// await page.locator('css=[aria-label^="Story by"]').last().click();
 console.log("story hath been click");
 await page.waitForRequest(
   (request) => new URL(request.url()).pathname === "/graphql/query"
 );
 console.log("a request was made");
 await page.waitForTimeout(1000);
-console.log("waited..screensotoing");
+for (let i = 0; i < 3; i++) {
+  // click last visible story
+  await page
+    .locator('css=section > div > div > div > a[role="link"]')
+    .last()
+    .click();
+  await page
+    .waitForRequest(
+      (request) => new URL(request.url()).pathname === "/graphql/query",
+      { timeout: 1000 }
+    )
+    .catch(() =>
+      console.log("no graphql query from paging down story, oh well")
+    );
+  await page.waitForTimeout(500); // give time for page to update so i can press end key again
+  console.log("story pagination", i + 1);
+}
+console.log("screenshot time!");
+await page.screenshot({ path: "bruh.png", fullPage: true });
 await page.context().storageState({ path: "auth.json" });
 await browser.close();
 
