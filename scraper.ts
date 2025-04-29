@@ -1,7 +1,7 @@
 // node --experimental-strip-types scraper.ts
 
 import playwright, { type Response } from "playwright";
-import cookies from "./cookies.json" with { type: "json" };
+// import cookies from "./cookies.json" with { type: "json" };
 import path from "path";
 import fs from "fs/promises";
 import GenAI, { type Part } from "@google/genai";
@@ -181,10 +181,24 @@ const schemaPrompt = `output only a JSON array of event objects without any expl
   "end": { "hour": number; "minute": number } // 24-hour format, optional and omitted if no end time specified
 }`;
 
+let geminiCalls = 0;
+let starting = 0;
 async function readImages(
   imageUrls: string[],
   caption?: string
 ): Promise<GeminiResult[]> {
+  if (geminiCalls >= 15) {
+    // max 15 RPM on free plan. 5 seconds just in case
+    const ready = starting + (60 + 5) * 1000;
+    const delay = ready - Date.now();
+    console.log("taking a", delay / 1000, "sec break to cool off on gemini");
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    geminiCalls = 0;
+  }
+  if (geminiCalls === 0) {
+    starting = Date.now();
+  }
+  geminiCalls++;
   const result = await ai.models.generateContent({
     model: "gemini-2.0-flash",
     contents: [
@@ -216,8 +230,18 @@ const browser = await playwright.firefox.launch({
   // see the browser
   // headless: false,
 });
-const context = await browser.newContext();
-await context.addCookies(cookies);
+const storageStateExists = await fs
+  .stat("auth.json")
+  .then(() => true)
+  .catch(() => false);
+const context = await browser.newContext({
+  storageState: storageStateExists ? "auth.json" : undefined,
+});
+if (!storageStateExists) {
+  await context.addCookies(
+    JSON.parse(await fs.readFile("cookies.json", "utf-8"))
+  );
+}
 const page = await context.newPage();
 const allUserStories: UserStories[] = [];
 const allTimelinePosts: TimelinePost[] = [];
@@ -352,6 +376,7 @@ await page.waitForRequest(
 console.log("a request was made");
 await page.waitForTimeout(1000);
 console.log("waited..screensotoing");
+await page.context().storageState({ path: "auth.json" });
 await browser.close();
 
 await Promise.all(promises);
