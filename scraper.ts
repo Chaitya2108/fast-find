@@ -174,7 +174,7 @@ type ScrapedEvent = ((GeminiResult & { result: true }) | { result: false }) & {
 const schemaPrompt = `output only a JSON array of event objects without any explanation or formatting, whose contents each conform to the following schema.
 
 {
-  "freeFood": string[], // List only free consumable items, using the original phrasing from the post (e.g. "Dirty Birds", "Tapex", "boba", "refreshments", "snacks", "food"). Empty if no free consumables.
+  "freeFood": string[], // List only consumable items provided at the event, using the original phrasing from the post (e.g. "Dirty Birds", "Tapex", "boba", "refreshments", "snacks", "food"). Empty if no consumables. Exclude items that must be purchased.
   "location": string,
   "date": { "year": number; "month": number; "date": number }, // Month is between 1 and 12
   "start": { "hour": number; "minute": number }, // 24-hour format
@@ -354,21 +354,27 @@ for (const script of await page
   }
 }
 console.log("i am instagramming now");
-for (let i = 0; i < 5; i++) {
+for (let i = 0; i < 1; i++) {
   await page.keyboard.press("End"); // scroll to bottom
   await page
     .waitForRequest(
       (request) => new URL(request.url()).pathname === "/graphql/query",
       { timeout: 1000 }
     )
-    .catch(() => {});
+    .catch(() => console.log("no graphql query from pressing end key"));
   await page.waitForTimeout(500); // give time for page to update so i can press end key again
   console.log("end key", i + 1);
 }
+await page.keyboard.press("Home");
+const storyScroller = page.locator(
+  'css=[data-pagelet="story_tray"] [role=presentation]'
+);
+await storyScroller.hover();
+await page.mouse.wheel(10000, 0);
 await page.screenshot({ path: "bruh.png", fullPage: true });
-const story = await page.waitForSelector('[aria-label^="Story by"]');
+await page.waitForSelector('[aria-label^="Story by"]');
 console.log("i see the stories are ready for me to CLICK");
-await story.click();
+await page.locator('css=[aria-label^="Story by"]').last().click();
 console.log("story hath been click");
 await page.waitForRequest(
   (request) => new URL(request.url()).pathname === "/graphql/query"
