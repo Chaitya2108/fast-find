@@ -230,18 +230,18 @@ const browser = await playwright.firefox.launch({
   // see the browser
   // headless: false,
 });
-const storageStateExists = await fs
-  .stat("auth.json")
-  .then(() => true)
-  .catch(() => false);
+// const storageStateExists = await fs
+//   .stat("auth.json")
+//   .then(() => true)
+//   .catch(() => false);
 const context = await browser.newContext({
-  storageState: storageStateExists ? "auth.json" : undefined,
+  // storageState: storageStateExists ? "auth.json" : undefined,
 });
-if (!storageStateExists) {
-  await context.addCookies(
-    JSON.parse(await fs.readFile("cookies.json", "utf-8"))
-  );
-}
+// if (!storageStateExists) {
+await context.addCookies(
+  JSON.parse(await fs.readFile("cookies.json", "utf-8"))
+);
+// }
 const page = await context.newPage();
 const allUserStories: UserStories[] = [];
 const allTimelinePosts: TimelinePost[] = [];
