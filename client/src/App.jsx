@@ -40,10 +40,14 @@ function App() {
     fetch(API_URL) // automatically forwarded via proxy
       .then(res => res.json())
       .then(data => {
-        const today = new Date();
+        const [todayDate, todayTime] = new Date().toLocaleString('en-CA', { hour12: false, timeZone: 'America/Los_Angeles' }).split(', ')
+        const [year, month, date] = todayDate.split('-').map(Number);
+        const [hour, minute] = todayTime.split(':').map(Number);
+        const today = new Date(Date.UTC(year, month - 1, date, hour, minute));
         const validEvents = data.filter(e => e.date);
         validEvents.forEach(event => {
-          event.jsDate = new Date(event.date.year, event.date.month - 1, event.date.date);
+          const end = event.end ? event.end : {hour: 23, minute: 99};
+          event.jsDate = new Date(Date.UTC(event.date.year, event.date.month - 1, event.date.date, end.hour, end.minute));
         });
         const upcoming = validEvents
           .filter(event => event.jsDate >= today)
@@ -128,12 +132,11 @@ function App() {
 
 const styles = {
   grid: {
-    display: "flex",
-    flexWrap: "wrap",
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
     gap: "20px",
   },
   card: {
-    flex: "1 1 300px",
     padding: "20px",
     border: "1px solid #eee",
     borderRadius: "12px",
