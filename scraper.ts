@@ -20,6 +20,16 @@ type ImageV2Candidate = {
   height: number;
   url: string;
 };
+type StoryStickers<T = {}> =
+  | (T & {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      rotation: number;
+    })[]
+  | null;
+/** story */
 type EdgeNode = {
   /** seems to be user iD */
   id: string;
@@ -32,6 +42,10 @@ type EdgeNode = {
     image_versions2: {
       candidates: ImageV2Candidate[];
     };
+    /** unix timestamp in seconds */
+    taken_at: number;
+    /** `taken_at` + 86400 */
+    expiring_at: number;
     /** an XML string */
     video_dash_manifest: string | null;
     video_versions:
@@ -40,45 +54,46 @@ type EdgeNode = {
           url: string;
         }[]
       | null;
-    story_hashtags:
-      | {
-          x: number;
-          y: number;
-          width: number;
-          height: number;
-          rotation: number;
-          hashtag: { name: string; id: string };
-        }[]
-      | null;
-    story_feed_media:
-      | {
-          x: number;
-          y: number;
-          width: number;
-          height: number;
-          rotation: number;
-          /** instagram post ID: https://www.instagram.com/p/___/ */
-          media_code: string;
-        }[]
-      | null;
-    story_bloks_stickers: {
-      x: number;
-      y: number;
-      width: number;
-      height: number;
-      rotation: number;
+    story_hashtags: StoryStickers<{
+      hashtag: { name: string; id: string };
+    }>;
+    story_feed_media: StoryStickers<{
+      /** instagram post ID: https://www.instagram.com/p/___/ */
+      media_code: string;
+    }>;
+    story_bloks_stickers: StoryStickers<{
       bloks_sticker: {
         sticker_data: {
           ig_mention: { full_name: string; username: string };
         };
       };
-    }[];
+    }>;
+    story_link_stickers: StoryStickers<{
+      story_link: {
+        /**
+         * a https://l.instagram.com/ link :(
+         *
+         * can be cleaned up with:
+         *
+         * @example
+         * const url = new URL(new URL("https://l.instagram.com/?u=https%3A%2F%2Fgoogle.com%2F%3Ffbclid%3DPAZXh0bgNhZW0CMTEAAaeNc6WS9qpUAugNDZagvJQ73pKGfnlnQq0ZRfXeIO_D-jc1szmlZdwMM7cMPA_aem_xp9snzJoHdqx7DNg_wvvuw&e=AT2wJrjTj9FobakmZfhL847eoTJD0Nif8mYpAqvHOpj2akZkcaVXx4xU2YJdUbDAfoQ1iDbURq9LDxc-RA7DveuYm_-r1lgYuIIIUA").searchParams.get('u'))
+         * url.searchParams.delete('fbclid')
+         * url.toString()
+         */
+        url: string;
+      };
+    }>;
+    story_locations: StoryStickers<{ location: { pk: string } }>;
+    story_countdowns: StoryStickers;
+    story_questions: StoryStickers;
+    story_sliders: StoryStickers;
   }[];
   user: {
     username: string;
     profile_pic_url: string;
   };
 };
+/** post */
 type TimelinePostNode = {
   media: {
     owner: {
@@ -93,14 +108,16 @@ type TimelinePostNode = {
         }[]
       | null;
     code: string;
+    /** same as `owner`?? */
     user: {
-      // same as owner??
       username: string;
     };
-    // probably just the first slide
+    /** probably just the first slide */
     image_versions2: {
       candidates: ImageV2Candidate[];
     };
+    /** unix timestamp in seconds */
+    taken_at: number;
     caption: {
       text: string;
     };
@@ -122,6 +139,7 @@ type Story = {
   storyId: string;
   /** instagram post ID: https://www.instagram.com/p/___/ */
   postId: string | null;
+  timestamp: Date;
 };
 type UserStories = {
   username: string;
@@ -132,6 +150,7 @@ type TimelinePost = {
   caption: string;
   imageUrls: string[];
   postId: string;
+  timestamp: Date;
 };
 
 function selectBest(
@@ -161,7 +180,11 @@ async function fetchImageAsBase64(url: string, retries = 0): Promise<string> {
   } catch (error) {
     if (retries < 3) {
       console.error(error);
-      console.log("fetching image failed. will try again. retries =", retries);
+      console.log(
+        "fetching image failed. will try again in 5 secs. retries =",
+        retries
+      );
+      await new Promise((resolve) => setTimeout(resolve, 5 * 1000));
       return fetchImageAsBase64(url, retries + 1);
     } else {
       throw error;
@@ -190,15 +213,21 @@ const schemaPrompt = `output only a JSON array of event objects without any expl
   "freeFood": string[], // List only consumable items provided at the event, using the original phrasing from the post (e.g. "Dirty Birds", "Tapex", "boba", "refreshments", "snacks", "food"). Empty if no consumables. Exclude items that must be purchased.
   "location": string,
   "date": { "year": number; "month": number; "date": number }, // Month is between 1 and 12
-  "start": { "hour": number; "minute": number }, // 24-hour format
+  "start": { "hour": number; "minute": number }, // 24-hour format. Tip: something like "6-9 pm" is the same as "6 pm to 9 pm"
   "end": { "hour": number; "minute": number } // 24-hour format, optional and omitted if no end time specified
 }`;
 
+const fmt = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/Los_Angeles",
+  dateStyle: "long",
+  timeStyle: "short", // or medium since the timestamps have second precision
+});
 let geminiCalls = 0;
 let starting = 0;
 let geminiReady = Promise.resolve();
 async function readImages(
   imageUrls: string[],
+  timestamp: Date,
   caption?: string,
   retries = 0
 ): Promise<GeminiResult[]> {
@@ -235,7 +264,7 @@ async function readImages(
         )),
         {
           text:
-            `Using the following flyer${imageUrls.length !== 1 ? "s" : ""}${caption ? " and caption" : ""}, ${schemaPrompt}` +
+            `Using the following flyer${imageUrls.length !== 1 ? "s" : ""}${caption ? " and caption" : ""}, which was posted ${fmt.format(timestamp)}, ${schemaPrompt}` +
             (caption ? "\n\n" + caption : ""),
         },
       ],
@@ -257,7 +286,7 @@ async function readImages(
       console.log("cooling off for 15 secs then retrying. retries =", retries);
       await new Promise((resolve) => setTimeout(resolve, 15 * 1000));
       resolve();
-      return readImages(imageUrls, caption, retries + 1);
+      return readImages(imageUrls, timestamp, caption, retries + 1);
     } else {
       throw error;
     }
@@ -304,16 +333,17 @@ async function handleGraphQlResponse(response: GraphQlResponse): Promise<void> {
             imageUrl: selectBest(item.image_versions2.candidates, true),
             postId: item.story_feed_media?.[0].media_code ?? null,
             storyId: item.pk,
+            timestamp: new Date(item.taken_at * 1000),
           };
         }),
       })
     );
     allUserStories.push(...userStories);
     for (const { username, stories } of userStories) {
-      for (const { storyId, postId, imageUrl } of stories) {
+      for (const { storyId, postId, imageUrl, timestamp } of stories) {
         const sourceId = `story/${username}/${storyId}`;
         const url = postId ? `https://www.instagram.com/p/${postId}/` : null;
-        const added = await insertIfNew(sourceId, url, [imageUrl]);
+        const added = await insertIfNew(sourceId, url, [imageUrl], timestamp);
         console.log(sourceId, added);
       }
     }
@@ -346,15 +376,28 @@ async function handleGraphQlResponse(response: GraphQlResponse): Promise<void> {
               selectBest(image_versions2.candidates)
             ),
             postId: media.code,
+            timestamp: new Date(media.taken_at * 1000),
           },
         ];
       }
     );
     allTimelinePosts.push(...timelinePosts);
-    for (const { username, postId, caption, imageUrls } of timelinePosts) {
+    for (const {
+      username,
+      postId,
+      caption,
+      imageUrls,
+      timestamp,
+    } of timelinePosts) {
       const sourceId = `post/${username}/${postId}`;
       const url = `https://www.instagram.com/p/${postId}/`;
-      const added = await insertIfNew(sourceId, url, imageUrls, caption);
+      const added = await insertIfNew(
+        sourceId,
+        url,
+        imageUrls,
+        timestamp,
+        caption
+      );
       console.log(sourceId, added);
     }
     return;
@@ -422,15 +465,25 @@ for (let i = 0; i < 5; i++) {
   console.log("end key", i + 1);
 }
 await page.keyboard.press("Home");
-// const storyScroller = page.locator(
-//   'css=[data-pagelet="story_tray"] [role=presentation]'
-// );
-// await storyScroller.hover();
-// for (let i = 0; i < 10; i++) await page.mouse.wheel(1000, 0);
-const story = await page.waitForSelector('[aria-label^="Story by"]');
-console.log("i see the stories are ready for me to CLICK");
-await story.click();
-// await page.locator('css=[aria-label^="Story by"]').last().click();
+let storiesFromEnd = false;
+if (storiesFromEnd) {
+  // scroll to end has several benefits:
+  // - no ads
+  // - will include already-read storeies
+  // downside:
+  const storyScroller = page.locator(
+    'css=[data-pagelet="story_tray"] [role=presentation]'
+  );
+  await storyScroller.hover();
+  for (let i = 0; i < 10; i++) await page.mouse.wheel(1000, 0);
+  console.log("screenshot time!");
+  await page.screenshot({ path: "bruh.png", fullPage: true });
+  await page.locator('css=[aria-label^="Story by"]').last().click();
+} else {
+  const story = await page.waitForSelector('[aria-label^="Story by"]');
+  console.log("i see the stories are ready for me to CLICK");
+  await story.click();
+}
 console.log("story hath been click");
 await page.waitForRequest(
   (request) => new URL(request.url()).pathname === "/graphql/query"
@@ -438,11 +491,19 @@ await page.waitForRequest(
 console.log("a request was made");
 await page.waitForTimeout(1000);
 for (let i = 0; i < 3; i++) {
-  // click last visible story
-  await page
-    .locator('css=section > div > div > div > a[role="link"]')
-    .last()
-    .click();
+  if (storiesFromEnd) {
+    // click last visible story
+    await page
+      .locator('css=section > div > div > div > a[role="link"]')
+      .first()
+      .click();
+  } else {
+    // click last visible story
+    await page
+      .locator('css=section > div > div > div > a[role="link"]')
+      .last()
+      .click();
+  }
   await page
     .waitForRequest(
       (request) => new URL(request.url()).pathname === "/graphql/query",
@@ -454,8 +515,6 @@ for (let i = 0; i < 3; i++) {
   await page.waitForTimeout(500); // give time for page to update so i can press end key again
   console.log("story pagination", i + 1);
 }
-console.log("screenshot time!");
-await page.screenshot({ path: "bruh.png", fullPage: true });
 await page.context().storageState({ path: "auth.json" });
 await browser.close();
 
