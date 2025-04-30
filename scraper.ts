@@ -183,45 +183,65 @@ const schemaPrompt = `output only a JSON array of event objects without any expl
 
 let geminiCalls = 0;
 let starting = 0;
+let geminiReady = Promise.resolve();
 async function readImages(
   imageUrls: string[],
-  caption?: string
+  caption?: string,
+  retried = false
 ): Promise<GeminiResult[]> {
+  await geminiReady;
   if (geminiCalls >= 15) {
     // max 15 RPM on free plan. 5 seconds just in case
     const ready = starting + (60 + 5) * 1000;
     const delay = ready - Date.now();
     console.log("taking a", delay / 1000, "sec break to cool off on gemini");
-    await new Promise((resolve) => setTimeout(resolve, delay));
+    geminiReady = new Promise((resolve) => setTimeout(resolve, delay));
+    await geminiReady;
     geminiCalls = 0;
   }
   if (geminiCalls === 0) {
     starting = Date.now();
   }
   geminiCalls++;
-  const result = await ai.models.generateContent({
-    model: "gemini-2.0-flash",
-    contents: [
-      ...(await Promise.all(
-        imageUrls.map((url) =>
-          fetchImageAsBase64(url).then(
-            (dataUrl): Part => ({
-              inlineData: { data: dataUrl, mimeType: "image/jpeg" },
-            })
+  try {
+    const result = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: [
+        ...(await Promise.all(
+          imageUrls.map((url) =>
+            fetchImageAsBase64(url).then(
+              (dataUrl): Part => ({
+                inlineData: { data: dataUrl, mimeType: "image/jpeg" },
+              })
+            )
           )
-        )
-      )),
-      {
-        text:
-          `Using the following flyer${imageUrls.length !== 1 ? "s" : ""}${caption ? " and caption" : ""}, ${schemaPrompt}` +
-          (caption ? "\n\n" + caption : ""),
+        )),
+        {
+          text:
+            `Using the following flyer${imageUrls.length !== 1 ? "s" : ""}${caption ? " and caption" : ""}, ${schemaPrompt}` +
+            (caption ? "\n\n" + caption : ""),
+        },
+      ],
+      config: {
+        responseMimeType: "application/json",
       },
-    ],
-    config: {
-      responseMimeType: "application/json",
-    },
-  });
-  return JSON.parse(result.text ?? "{}");
+    });
+    return JSON.parse(result.text ?? "{}");
+  } catch (error) {
+    // ServerError: got status: 503 Service Unavailable. {"error":{"code":503,"message":"The model is overloaded. Please try again later.","status":"UNAVAILABLE"}}
+    if (
+      !retried &&
+      error instanceof Error &&
+      error.message.includes("503 Service Unavailable")
+    ) {
+      console.error("[gemini error]", error);
+      console.log("cooling off for 15 secs then retrying");
+      await new Promise((resolve) => setTimeout(resolve, 15 * 1000));
+      return readImages(imageUrls, caption, true);
+    } else {
+      throw error;
+    }
+  }
 }
 
 // https://oxylabs.io/blog/playwright-web-scraping
@@ -246,7 +266,7 @@ const page = await context.newPage();
 const allUserStories: UserStories[] = [];
 const allTimelinePosts: TimelinePost[] = [];
 let id = 0;
-function handleGraphQlResponse(response: GraphQlResponse): void {
+async function handleGraphQlResponse(response: GraphQlResponse): Promise<void> {
   const {
     data: {
       xdt_api__v1__feed__reels_media__connection: storyData,
@@ -267,6 +287,14 @@ function handleGraphQlResponse(response: GraphQlResponse): void {
       })
     );
     allUserStories.push(...userStories);
+    for (const { username, stories } of allUserStories) {
+      for (const { storyId, postId, imageUrl } of stories) {
+        const sourceId = `story/${username}/${storyId}`;
+        const url = postId ? `https://www.instagram.com/p/${postId}/` : null;
+        const added = await insertIfNew(sourceId, url, [imageUrl]);
+        console.log(sourceId, added);
+      }
+    }
     // for (const { username, stories } of userStories) {
     //   console.log(`[${username}]`);
     //   for (const story of stories) {
@@ -301,6 +329,12 @@ function handleGraphQlResponse(response: GraphQlResponse): void {
       }
     );
     allTimelinePosts.push(...timelinePosts);
+    for (const { username, postId, caption, imageUrls } of allTimelinePosts) {
+      const sourceId = `post/${username}/${postId}`;
+      const url = `https://www.instagram.com/p/${postId}/`;
+      const added = await insertIfNew(sourceId, url, imageUrls, caption);
+      console.log(sourceId, added);
+    }
     return;
   }
   console.log("| this one has no stories");
@@ -317,7 +351,7 @@ async function handleResponse(response: Response): Promise<void> {
     console.log(filePath, url);
     id++;
     await fs.writeFile(filePath, buffer);
-    handleGraphQlResponse(JSON.parse(buffer.toString("utf-8")));
+    await handleGraphQlResponse(JSON.parse(buffer.toString("utf-8")));
   }
   // if (buffer.slice(0, prefix.length).equals(prefix)) {
   //   await fs.writeFile(filePath + ".json", buffer.slice(prefix.length));
@@ -350,11 +384,11 @@ for (const script of await page
     .catch(() => {});
   const results = Array.from(analyze(json));
   for (const result of results) {
-    handleGraphQlResponse(result);
+    await handleGraphQlResponse(result);
   }
 }
 console.log("i am instagramming now");
-for (let i = 0; i < 1; i++) {
+for (let i = 0; i < 5; i++) {
   await page.keyboard.press("End"); // scroll to bottom
   await page
     .waitForRequest(
@@ -365,7 +399,7 @@ for (let i = 0; i < 1; i++) {
   await page.waitForTimeout(500); // give time for page to update so i can press end key again
   console.log("end key", i + 1);
 }
-// await page.keyboard.press("Home");
+await page.keyboard.press("Home");
 // const storyScroller = page.locator(
 //   'css=[data-pagelet="story_tray"] [role=presentation]'
 // );
@@ -431,22 +465,8 @@ async function insertIfNew(
   return true;
 }
 
-console.log("allUserStories", allUserStories);
-console.log("allTimelinePosts", allTimelinePosts);
-for (const { username, stories } of allUserStories) {
-  for (const { storyId, postId, imageUrl } of stories) {
-    const sourceId = `story/${username}/${storyId}`;
-    const url = postId ? `https://www.instagram.com/p/${postId}/` : null;
-    const added = await insertIfNew(sourceId, url, [imageUrl]);
-    console.log(sourceId, added);
-  }
-}
-for (const { username, postId, caption, imageUrls } of allTimelinePosts) {
-  const sourceId = `post/${username}/${postId}`;
-  const url = `https://www.instagram.com/p/${postId}/`;
-  const added = await insertIfNew(sourceId, url, imageUrls, caption);
-  console.log(sourceId, added);
-}
+// console.log("allUserStories", allUserStories);
+// console.log("allTimelinePosts", allTimelinePosts);
 console.log(
   "ok gamers we done. it is safe to ctrl+C if the program does not exit on its own"
 );
