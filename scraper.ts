@@ -149,14 +149,24 @@ function selectBest(
   ).url;
 }
 
-async function fetchImageAsBase64(url: string): Promise<string> {
-  const response = await fetch(url).catch((error) => {
-    console.error(error);
-    return Promise.reject(new Error(`Fetch error: ${url}`));
-  });
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  return buffer.toString("base64");
+async function fetchImageAsBase64(url: string, retries = 0): Promise<string> {
+  try {
+    const response = await fetch(url).catch((error) => {
+      console.error(error);
+      return Promise.reject(new Error(`Fetch error: ${url}`));
+    });
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    return buffer.toString("base64");
+  } catch (error) {
+    if (retries < 3) {
+      console.error(error);
+      console.log("fetching image failed. will try again. retries =", retries);
+      return fetchImageAsBase64(url, retries + 1);
+    } else {
+      throw error;
+    }
+  }
 }
 
 const apiKey = (await fs.readFile("api_key.txt", "utf-8")).trim();
@@ -190,7 +200,7 @@ let geminiReady = Promise.resolve();
 async function readImages(
   imageUrls: string[],
   caption?: string,
-  retried = false
+  retries = 0
 ): Promise<GeminiResult[]> {
   // ensure gemini calls are performed in series
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -238,16 +248,16 @@ async function readImages(
     // ServerError: got status: 503 Service Unavailable. {"error":{"code":503,"message":"The model is overloaded. Please try again later.","status":"UNAVAILABLE"}}
     // ServerError: got status: 500 Internal Server Error. {"error":{"code":500,"message":"Internal error encountered.","status":"INTERNAL"}}
     if (
-      !retried &&
+      retries < 3 &&
       error instanceof Error &&
       (error.message.includes("503 Service Unavailable") ||
         error.message.includes("500 Internal Server Error"))
     ) {
       console.error("[gemini error]", error);
-      console.log("cooling off for 15 secs then retrying");
+      console.log("cooling off for 15 secs then retrying. retries =", retries);
       await new Promise((resolve) => setTimeout(resolve, 15 * 1000));
       resolve();
-      return readImages(imageUrls, caption, true);
+      return readImages(imageUrls, caption, retries + 1);
     } else {
       throw error;
     }
