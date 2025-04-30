@@ -150,7 +150,10 @@ function selectBest(
 }
 
 async function fetchImageAsBase64(url: string): Promise<string> {
-  const response = await fetch(url);
+  const response = await fetch(url).catch((error) => {
+    console.error(error);
+    return Promise.reject(new Error(`Fetch error: ${url}`));
+  });
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   return buffer.toString("base64");
@@ -189,14 +192,18 @@ async function readImages(
   caption?: string,
   retried = false
 ): Promise<GeminiResult[]> {
-  await geminiReady;
+  // ensure gemini calls are performed in series
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const oldPromise = geminiReady;
+  geminiReady = geminiReady.then(() => promise);
+  await oldPromise;
+
   if (geminiCalls >= 15) {
     // max 15 RPM on free plan. 5 seconds just in case
     const ready = starting + (60 + 5) * 1000;
     const delay = ready - Date.now();
     console.log("taking a", delay / 1000, "sec break to cool off on gemini");
-    geminiReady = new Promise((resolve) => setTimeout(resolve, delay));
-    await geminiReady;
+    await new Promise((resolve) => setTimeout(resolve, delay));
     geminiCalls = 0;
   }
   if (geminiCalls === 0) {
@@ -229,18 +236,23 @@ async function readImages(
     return JSON.parse(result.text ?? "{}");
   } catch (error) {
     // ServerError: got status: 503 Service Unavailable. {"error":{"code":503,"message":"The model is overloaded. Please try again later.","status":"UNAVAILABLE"}}
+    // ServerError: got status: 500 Internal Server Error. {"error":{"code":500,"message":"Internal error encountered.","status":"INTERNAL"}}
     if (
       !retried &&
       error instanceof Error &&
-      error.message.includes("503 Service Unavailable")
+      (error.message.includes("503 Service Unavailable") ||
+        error.message.includes("500 Internal Server Error"))
     ) {
       console.error("[gemini error]", error);
       console.log("cooling off for 15 secs then retrying");
       await new Promise((resolve) => setTimeout(resolve, 15 * 1000));
+      resolve();
       return readImages(imageUrls, caption, true);
     } else {
       throw error;
     }
+  } finally {
+    resolve();
   }
 }
 
@@ -287,7 +299,7 @@ async function handleGraphQlResponse(response: GraphQlResponse): Promise<void> {
       })
     );
     allUserStories.push(...userStories);
-    for (const { username, stories } of allUserStories) {
+    for (const { username, stories } of userStories) {
       for (const { storyId, postId, imageUrl } of stories) {
         const sourceId = `story/${username}/${storyId}`;
         const url = postId ? `https://www.instagram.com/p/${postId}/` : null;
@@ -329,7 +341,7 @@ async function handleGraphQlResponse(response: GraphQlResponse): Promise<void> {
       }
     );
     allTimelinePosts.push(...timelinePosts);
-    for (const { username, postId, caption, imageUrls } of allTimelinePosts) {
+    for (const { username, postId, caption, imageUrls } of timelinePosts) {
       const sourceId = `post/${username}/${postId}`;
       const url = `https://www.instagram.com/p/${postId}/`;
       const added = await insertIfNew(sourceId, url, imageUrls, caption);
