@@ -342,7 +342,9 @@ async function handleGraphQlResponse(response: GraphQlResponse): Promise<void> {
     for (const { username, stories } of userStories) {
       for (const { storyId, postId, imageUrl, timestamp } of stories) {
         const sourceId = `story/${username}/${storyId}`;
-        const url = postId ? `https://www.instagram.com/p/${postId}/` : null;
+        const url = postId
+          ? `https://www.instagram.com/p/${postId}/`
+          : `https://www.instagram.com/stories/${username}/${storyId}/`;
         const added = await insertIfNew(sourceId, url, [imageUrl], timestamp);
         console.log(sourceId, added);
       }
@@ -471,6 +473,7 @@ if (storiesFromEnd) {
   // - no ads
   // - will include already-read storeies
   // downside:
+  // - will include already-read storeies
   const storyScroller = page.locator(
     'css=[data-pagelet="story_tray"] [role=presentation]'
   );
@@ -517,21 +520,27 @@ for (let i = 0; i < 3; i++) {
 }
 await page.context().storageState({ path: "auth.json" });
 await browser.close();
+console.log("i close the browser");
 
 await Promise.all(promises);
 
 async function insertIfNew(
   sourceId: string,
-  url: string | null,
+  url: string,
   ...args: Parameters<typeof readImages>
-): Promise<boolean> {
+): Promise<GeminiResult[] | null> {
   const existingDoc = await collection.findOne({ sourceId });
   if (existingDoc) {
-    return false;
+    return null;
   }
   const events = (await readImages(...args)).filter(
     (event) => event.freeFood.length > 0
   );
+  for (const event of events) {
+    if (event.date.year !== new Date().getFullYear()) {
+      console.warn(event, "is in a weird year");
+    }
+  }
   if (events.length > 0) {
     await collection.insertMany(
       events.map((event) => ({ ...event, sourceId, url, result: true }))
@@ -543,11 +552,10 @@ async function insertIfNew(
       result: false,
     });
   }
-  return true;
+  return events;
 }
 
 // console.log("allUserStories", allUserStories);
 // console.log("allTimelinePosts", allTimelinePosts);
-console.log(
-  "ok gamers we done. it is safe to ctrl+C if the program does not exit on its own"
-);
+console.log("ok gamers we done");
+process.exit(0);
