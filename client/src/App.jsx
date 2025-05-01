@@ -27,12 +27,20 @@ function matchesSearch(event, search) {
   );
 }
 
+function getToday () {
+  const [todayDate, todayTime] = new Date().toLocaleString('en-CA', { hour12: false, timeZone: 'America/Los_Angeles' }).split(', ')
+  const [year, month, date] = todayDate.split('-').map(Number);
+  const [hour, minute] = todayTime.split(':').map(Number);
+  return { year, month, date, hour, minute }
+}
+
 function App() {
   const API_URL = import.meta.env.VITE_API_URL || "/api/events";                                     // local proxy path
 
   const [upcomingEvents, setUpcomingEvents] = useState([]);
   const [pastEvents, setPastEvents] = useState([]);
   const [search, setSearch] = useState("");
+  const [today] = useState(getToday);
 
 
   useEffect(() => {
@@ -40,9 +48,7 @@ function App() {
     fetch(API_URL) // automatically forwarded via proxy
       .then(res => res.json())
       .then(data => {
-        const [todayDate, todayTime] = new Date().toLocaleString('en-CA', { hour12: false, timeZone: 'America/Los_Angeles' }).split(', ')
-        const [year, month, date] = todayDate.split('-').map(Number);
-        const [hour, minute] = todayTime.split(':').map(Number);
+        const { year, month, date, hour, minute } = getToday()
         const today = new Date(Date.UTC(year, month - 1, date, hour, minute));
         const validEvents = data.filter(e => e.date);
         validEvents.forEach(event => {
@@ -86,9 +92,9 @@ function App() {
         <div style={styles.grid}>
           {upcomingEvents.filter(event => matchesSearch(event, search)).map((event, idx) => (
             <div key={idx} style={styles.card}>
-              <h3 style={styles.title}>{event.location || "Unknown Location"}</h3>
+              <h3 style={styles.title}>{event.location || "(Unknown Location)"}</h3>
               <p><strong>Food:</strong> {event.freeFood?.join(", ") || "N/A"}</p>
-              <p><strong>Date:</strong> {event.date.month}/{event.date.date}/{event.date.year}</p>
+              <p style={{ fontWeight: event.date.year === today.year && event.date.month === today.month && event.date.date === today.date ? 'bold' : '' }}><strong>Date:</strong> {event.date.month}/{event.date.date}/{event.date.year}</p>
               <p>
                 <strong>Time:</strong> 
                 {event.start ? ` ${event.start.hour}:${event.start.minute.toString().padStart(2, '0')}` : ""} 
@@ -109,9 +115,9 @@ function App() {
         <div style={styles.grid}>
           {pastEvents.filter(event => matchesSearch(event, search)).map((event, idx) => (
             <div key={idx} style={{ ...styles.card, opacity: 0.5 }}>
-              <h3 style={styles.title}>{event.location || "Unknown Location"}</h3>
+              <h3 style={styles.title}>{event.location || "(Unknown Location)"}</h3>
               <p><strong>Food:</strong> {event.freeFood?.join(", ") || "N/A"}</p>
-              <p><strong>Date:</strong> {event.date.month}/{event.date.date}/{event.date.year}</p>
+              <p style={{ fontWeight: event.date.year === today.year && event.date.month === today.month && event.date.date === today.date ? 'bold' : '' }}><strong>Date:</strong> {event.date.month}/{event.date.date}/{event.date.year}</p>
               <p>
                 <strong>Time:</strong> 
                 {event.start ? ` ${event.start.hour}:${event.start.minute.toString().padStart(2, '0')}` : ""} 
