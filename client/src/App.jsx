@@ -102,7 +102,9 @@ function App() {
               </p>
               {event.url && (
                 <a href={event.url} target="_blank" rel="noopener noreferrer" style={styles.link}>
-                  View Instagram
+                  {event.previewData ? (
+                    <img alt='View Instagram' src={`data:image/webp;base64,${event.previewData}`} />
+                  ) : 'View Instagram'}
                 </a>
               )}
             </div>
@@ -125,7 +127,9 @@ function App() {
               </p>
               {event.url && (
                 <a href={event.url} target="_blank" rel="noopener noreferrer" style={styles.link}>
-                  View Instagram
+                  {event.previewData ? (
+                    <img alt='View Instagram' src={`data:image/webp;base64,${event.previewData}`} />
+                  ) : 'View Instagram'}
                 </a>
               )}
             </div>

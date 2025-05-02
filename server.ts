@@ -17,7 +17,7 @@ const db = client.db("events_db"); // replace with your actual db name
 const events = db.collection("events_collection");   // replace with your actual collection name
 
 app.get("/api/events", async (req, res) => {
-  const allEvents = await events.find({}).sort({ date: 1 }).toArray(); // sort chronologically
+  const allEvents = await events.find({ result: true }).sort({ date: 1 }).toArray(); // sort chronologically
   console.log(allEvents);
   res.json(allEvents);
   

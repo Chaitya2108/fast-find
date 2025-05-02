@@ -557,7 +557,7 @@ async function insertIfNew(
     // it kinda looks like they're all 4:5 now :/
     const buffer = await sharp(images[0])
       .resize(80, 100, { fit: "cover" })
-      .webp({ quality: 0.2 })
+      .webp({ quality: 20 })
       .toBuffer();
     const previewData = buffer.toString("base64");
     await collection.insertMany(
