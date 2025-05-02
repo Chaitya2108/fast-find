@@ -6,6 +6,7 @@ import path from "path";
 import fs from "fs/promises";
 import GenAI, { type Part } from "@google/genai";
 import { Collection, MongoClient } from "mongodb";
+import sharp from "sharp";
 const { GoogleGenAI } = GenAI;
 
 const client = new MongoClient(
@@ -168,15 +169,15 @@ function selectBest(
   ).url;
 }
 
-async function fetchImageAsBase64(url: string, retries = 0): Promise<string> {
+async function fetchImage(url: string, retries = 0): Promise<ArrayBuffer> {
   try {
     const response = await fetch(url).catch((error) => {
       console.error(error);
       return Promise.reject(new Error(`Fetch error: ${url}`));
     });
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    return buffer.toString("base64");
+    return response.arrayBuffer();
+    // const buffer = Buffer.from(arrayBuffer);
+    // return buffer.toString("base64");
   } catch (error) {
     if (retries < 3) {
       console.error(error);
@@ -185,7 +186,7 @@ async function fetchImageAsBase64(url: string, retries = 0): Promise<string> {
         retries
       );
       await new Promise((resolve) => setTimeout(resolve, 5 * 1000));
-      return fetchImageAsBase64(url, retries + 1);
+      return fetchImage(url, retries + 1);
     } else {
       throw error;
     }
@@ -202,7 +203,10 @@ type GeminiResult = {
   start: { hour: number; minute: number };
   end?: { hour: number; minute: number };
 };
-type ScrapedEvent = ((GeminiResult & { result: true }) | { result: false }) & {
+type ScrapedEvent = (
+  | (GeminiResult & { result: true; previewData?: string })
+  | { result: false }
+) & {
   sourceId: string;
   url: string | null;
 };
@@ -220,13 +224,14 @@ const schemaPrompt = `output only a JSON array of event objects without any expl
 const fmt = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/Los_Angeles",
   dateStyle: "long",
-  timeStyle: "short", // or medium since the timestamps have second precision
+  // gemini will use the current time for the event :/
+  // timeStyle: "short", // or medium since the timestamps have second precision
 });
 let geminiCalls = 0;
 let starting = 0;
 let geminiReady = Promise.resolve();
 async function readImages(
-  imageUrls: string[],
+  images: ArrayBuffer[],
   timestamp: Date,
   caption?: string,
   retries = 0
@@ -253,18 +258,22 @@ async function readImages(
     const result = await ai.models.generateContent({
       model: "gemini-2.0-flash",
       contents: [
-        ...(await Promise.all(
-          imageUrls.map((url) =>
-            fetchImageAsBase64(url).then(
-              (dataUrl): Part => ({
-                inlineData: { data: dataUrl, mimeType: "image/jpeg" },
-              })
-            )
-          )
-        )),
+        ...images.map(
+          (buffer): Part =>
+            // fetchImageAsBase64(url).then(
+            // (dataUrl): Part => ({
+            ({
+              inlineData: {
+                data: Buffer.from(buffer).toString("base64"),
+                mimeType: "image/jpeg",
+              },
+            })
+          // })
+          // )
+        ),
         {
           text:
-            `Using the following flyer${imageUrls.length !== 1 ? "s" : ""}${caption ? " and caption" : ""}, which was posted ${fmt.format(timestamp)}, ${schemaPrompt}` +
+            `Using the following flyer${images.length !== 1 ? "s" : ""}${caption ? " and caption" : ""}, which was posted ${fmt.format(timestamp)}, ${schemaPrompt}` +
             (caption ? "\n\n" + caption : ""),
         },
       ],
@@ -286,7 +295,7 @@ async function readImages(
       console.log("cooling off for 15 secs then retrying. retries =", retries);
       await new Promise((resolve) => setTimeout(resolve, 15 * 1000));
       resolve();
-      return readImages(imageUrls, timestamp, caption, retries + 1);
+      return readImages(images, timestamp, caption, retries + 1);
     } else {
       throw error;
     }
@@ -493,7 +502,7 @@ await page.waitForRequest(
 );
 console.log("a request was made");
 await page.waitForTimeout(1000);
-for (let i = 0; i < 3; i++) {
+for (let i = 0; i < 5; i++) {
   if (storiesFromEnd) {
     // click last visible story
     await page
@@ -527,23 +536,40 @@ await Promise.all(promises);
 async function insertIfNew(
   sourceId: string,
   url: string,
-  ...args: Parameters<typeof readImages>
+  imageUrls: string[],
+  timestamp: Date,
+  caption?: string
 ): Promise<GeminiResult[] | null> {
   const existingDoc = await collection.findOne({ sourceId });
   if (existingDoc) {
     return null;
   }
-  const events = (await readImages(...args)).filter(
+  const images = await Promise.all(imageUrls.map(fetchImage));
+  const events = (await readImages(images, timestamp, caption)).filter(
     (event) => event.freeFood.length > 0
   );
-  for (const event of events) {
-    if (event.date.year !== new Date().getFullYear()) {
-      console.warn(event, "is in a weird year");
-    }
-  }
   if (events.length > 0) {
+    for (const event of events) {
+      if (event.date.year !== new Date().getFullYear()) {
+        console.warn(event, "is in a weird year");
+      }
+    }
+    // it kinda looks like they're all 4:5 now :/
+    const buffer = await sharp(images[0])
+      .resize(80, 100, { fit: "cover" })
+      .webp({ quality: 0.2 })
+      .toBuffer();
+    const previewData = buffer.toString("base64");
     await collection.insertMany(
-      events.map((event) => ({ ...event, sourceId, url, result: true }))
+      events.map(
+        (event): ScrapedEvent => ({
+          ...event,
+          sourceId,
+          url,
+          previewData,
+          result: true,
+        })
+      )
     );
   } else {
     await collection.insertOne({
