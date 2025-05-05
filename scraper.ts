@@ -119,9 +119,18 @@ type TimelinePostNode = {
     };
     /** unix timestamp in seconds */
     taken_at: number;
+    coauthor_producers: {
+      id: string;
+      /** same as id? */
+      pk: string;
+      profile_pic_url: string;
+      username: string;
+      full_name: string;
+    }[];
+    /** `null` if no caption (i.e. empty string) */
     caption: {
       text: string;
-    };
+    } | null;
   } | null;
 };
 type GraphQlResponse = {
@@ -197,14 +206,20 @@ const apiKey = (await fs.readFile("api_key.txt", "utf-8")).trim();
 const ai = new GoogleGenAI({ apiKey });
 
 type GeminiResult = {
-  freeFood: string[];
+  provided: string[];
   location: string;
   date: { year: number; month: number; date: number };
   start: { hour: number; minute: number };
   end?: { hour: number; minute: number };
 };
 type ScrapedEvent = (
-  | (GeminiResult & { result: true; previewData?: string })
+  | (Omit<GeminiResult, "provided"> & {
+      freeFood: string[];
+      result: true;
+      previewData?: string;
+      postTimestamp?: Date;
+      caption?: string;
+    })
   | { result: false }
 ) & {
   sourceId: string;
@@ -214,7 +229,7 @@ type ScrapedEvent = (
 const schemaPrompt = `output only a JSON array of event objects without any explanation or formatting, whose contents each conform to the following schema.
 
 {
-  "freeFood": string[], // List only consumable items provided at the event, using the original phrasing from the post (e.g. "Dirty Birds", "Tapex", "boba", "refreshments", "snacks", "food"). Empty if no consumables. Exclude items that must be purchased.
+  "provided": string[], // List of items provided at the event, if any, using the original phrasing from the post (e.g. "Dirty Birds", "Tapex", "boba", "refreshments", "snacks", "food", "T-shirt"). Exclude items that must be purchased.
   "location": string,
   "date": { "year": number; "month": number; "date": number }, // Month is between 1 and 12
   "start": { "hour": number; "minute": number }, // 24-hour format. Tip: something like "6-9 pm" is the same as "6 pm to 9 pm"
@@ -382,7 +397,7 @@ async function handleGraphQlResponse(response: GraphQlResponse): Promise<void> {
         return [
           {
             username: media.owner.username,
-            caption: media.caption.text,
+            caption: media.caption?.text ?? "",
             imageUrls: images.map(({ image_versions2 }) =>
               selectBest(image_versions2.candidates)
             ),
@@ -476,7 +491,7 @@ for (let i = 0; i < 5; i++) {
   console.log("end key", i + 1);
 }
 await page.keyboard.press("Home");
-let storiesFromEnd = false;
+let storiesFromEnd = true;
 if (storiesFromEnd) {
   // scroll to end has several benefits:
   // - no ads
@@ -502,7 +517,7 @@ await page.waitForRequest(
 );
 console.log("a request was made");
 await page.waitForTimeout(1000);
-for (let i = 0; i < 5; i++) {
+for (let i = 0; i < 10; i++) {
   if (storiesFromEnd) {
     // click last visible story
     await page
@@ -546,7 +561,7 @@ async function insertIfNew(
   }
   const images = await Promise.all(imageUrls.map(fetchImage));
   const events = (await readImages(images, timestamp, caption)).filter(
-    (event) => event.freeFood.length > 0
+    (event) => event.provided.length > 0
   );
   if (events.length > 0) {
     for (const event of events) {
@@ -562,11 +577,14 @@ async function insertIfNew(
     const previewData = buffer.toString("base64");
     await collection.insertMany(
       events.map(
-        (event): ScrapedEvent => ({
+        ({ provided, ...event }): ScrapedEvent => ({
+          freeFood: provided,
           ...event,
           sourceId,
           url,
           previewData,
+          postTimestamp: timestamp,
+          caption,
           result: true,
         })
       )
